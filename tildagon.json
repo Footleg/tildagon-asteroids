@@ -1,13 +1,13 @@
 {
   "app": {
-    "name": "Demo App",
-    "category": ["Badge"]
+    "name": "Asteroids",
+    "category": ["Games"]
   },
   "metadata": {
-    "author": "hughrawlinson",
-    "license": "LGPL-3.0-only",
-    "url": "https://www.github.com/hughrawlinson/tildagon-demo",
-    "description": "A demo tildagon app for use developing the app directory",
+    "author": "Footleg",
+    "license": "GPL-3.0-only",
+    "url": "https://github.com/Footleg/tildagon-asteroids",
+    "description": "A port of Asteroids with rock physics for a circular display.",
     "version": "0.0.1"
   }
 }
