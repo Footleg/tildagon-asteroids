@@ -1,6 +1,6 @@
 {
   "app": {
-    "name": "Asteroids+",
+    "name": "Asteroids w Physics",
     "category": ["Games"]
   },
   "metadata": {
@@ -8,6 +8,6 @@
     "license": "GPL-3.0-only",
     "url": "https://github.com/Footleg/tildagon-asteroids",
     "description": "A port of Asteroids with rock physics for a circular display.",
-    "version": "0.0.2"
+    "version": "0.1.0"
   }
 }

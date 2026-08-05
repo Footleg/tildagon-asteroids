@@ -6,8 +6,8 @@
 # Released under the [GPL-3.0 License](https://opensource.org/license/gpl-3.0).
 
 import app
-from apps.asteroids.tildagon_wrapper import Hardware_Wrapper
-from apps.asteroids.asteroids import AsteroidsGame
+from apps.Footleg_tildagon_asteroids.tildagon_wrapper import Hardware_Wrapper
+from apps.Footleg_tildagon_asteroids.asteroids import AsteroidsGame
 from events.input import Buttons, BUTTON_TYPES
 from app_components import clear_background
 
