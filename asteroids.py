@@ -2,6 +2,9 @@
 # github user samneggs published in 2021 under a GPL-3.0 license at 
 # https://github.com/samneggs/pi-pico
 #
+# This code is a copy from my main 'run on anything' python games repository at
+# https://github.com/Footleg/python-games
+#
 # Compared to the original code, this port refactors the game into a reusable class
 # where a hardware wrapper class is passed in, so it can be used with any device. 
 # The game class knows nothing about the hardware it is running on. The original code
@@ -12,7 +15,9 @@
 # rewritten to scale to different sizes of display, inlcuding circular displays. 
 #
 # I have added rock collision physics and a deflector shield to the ship so the ship can
-# bounce off rocks when the shield is active. I also made it possible to shoot yourself.
+# bounce off rocks when the shield is active. The ship rotation now has momentum so it 
+# behaves like a ship steered with thrusters would in space. I also made it possible to 
+# shoot yourself.
 #
 # To run this code, a wrapper application is needed which instantiates the hardware wrapper
 # and passes it into the constructor of the game class in this module.
@@ -24,6 +29,12 @@
 from math import sin,cos,radians,sqrt
 from random import randint
 import array
+
+class Obj_Types():
+    SHIP = 1
+    ASTEROID = 2
+    LETTER = 3
+    NUMBER = 4
 
 class Point():
     def __init__(self):
@@ -43,7 +54,7 @@ class Obj_point():
 
 class Vector_Object():
     """ Used for all vector objects (ship, asteroids, letters for game messages) """
-    def __init__(self, ptdeg, ptrad, pts, tumble, x, y, size, display):
+    def __init__(self, object_type, ptdeg, ptrad, pts, tumble, x, y, size, display):
         self.x = x # 230000 
         self.y = y # 125000 
         self.ax = 0 #randint(-40,40)*10 #10 # accel x
@@ -61,9 +72,10 @@ class Vector_Object():
         self.tumble = tumble         # degress added for tumbling
         self.active = True           # show on screen, move...
         self.back_colour = display.black
-        self.colour = display.white #0x008A
-        self.fps = 25                # Controls game animations so initialise to target fps
+        self.colour = display.white 
         self.active_exhaust = 0
+        self.type = object_type
+        self.spin_thrust = 0.0
 
     def calc_coll(self, scale=1.0):
         """ Sets collision radius to mean of object points radius """
@@ -182,16 +194,20 @@ class AsteroidsGame:
         self._title_frm_count = 0
         self._fps_tracked = 0
         self.title_fps = 0
+        self.fps = 25                # Controls game animations so initialise to target fps
         
         # Game parameters affecting difficulty. Some depend on screen area
         self.asteroid_max_size = min(7, int(((hardware.width * hardware.height)**0.25 / 5)))
         self.initial_asteroids = max(1,int(((hardware.width * hardware.height)**0.5 / 300)))
         self.max_asteroids = int((max(2, int(sqrt(hardware.width * hardware.height) // (50 * 2**(self.asteroid_max_size-2))))) * (2**self.asteroid_max_size) * 8)
         self.max_missiles = hardware.width // 40
-        self.hitbox_debug = False
+        self.debug = False
         self.hitbox_scale = 0.98 # 1.0 is exact mean object size
         self.initial_lives = 3 # Initial number of lives
         self.speed_cap = 600
+        self.max_ship_tumble = 250
+        self.ship_spin_power = 1.8  # Amount of rotational trust given to the ship per 1/25th of a second
+        self.adj_spin_power = self.ship_spin_power
         self.wrap = False
 
         # Game state
@@ -202,7 +218,7 @@ class AsteroidsGame:
         self.addingRocks = True
 
         # Single objects
-        self.ship = self._init_obj([0, 140, 220, 0], [3, 3, 3, 3], 8, 0, self.MAX_X // 2, self.MAX_Y // 2, 3 * self.SCALE)
+        self.ship = self._init_obj(Obj_Types.SHIP, [0, 140, 220, 0], [3, 3, 3, 3], 8, 0, self.MAX_X // 2, self.MAX_Y // 2, 3 * self.SCALE)
         self.ship.coll = self.ship.size * 4 # Sets size of shield collision boundary
         self.ship.colour = self.display.green
         self.shield_was_on = False
@@ -229,6 +245,11 @@ class AsteroidsGame:
         self.green_shades = []
         self.yellow_shades = []
         self._init_shades()
+
+        if self.debug:
+            self.backcolour = self.display.magenta
+        else:
+            self.backcolour = self.display.black
         
         # Game counters and state
         self.gticks = self.display.ticks_us()
@@ -279,7 +300,7 @@ class AsteroidsGame:
     def _init_title_letts(self):
         """Initialize title letter objects."""
         for i in range(0, 9):
-            self.titleLetts.append(self._init_obj(let_deg[i], let_rad[i], len(let_deg[i] * 2), 0, 0, 0, self.SCALE))
+            self.titleLetts.append(self._init_obj(Obj_Types.LETTER, let_deg[i], let_rad[i], len(let_deg[i] * 2), 0, 0, 0, self.SCALE))
             self.titleLetts[i].ax = 0
             self.titleLetts[i].ay = 0
             self.titleLetts[i].size = 0
@@ -287,14 +308,14 @@ class AsteroidsGame:
     
     def _init_game_over(self):
         """Initialize game over text objects."""
-        self.over_list.append(self._init_obj(score_deg[6], score_rad[6], len(score_deg[6] * 2), 0, 0, 0, 0))  # G
-        self.over_list.append(self._init_obj(let_deg[0], let_rad[0], len(let_deg[0] * 2), 0, 0, 0, 0))        # A
-        self.over_list.append(self._init_obj(let_deg[9], let_rad[9], len(let_deg[9] * 2), 0, 0, 0, 0))        # M
-        self.over_list.append(self._init_obj(let_deg[3], let_rad[3], len(let_deg[3] * 2), 0, 0, 0, 0))        # E
-        self.over_list.append(self._init_obj(let_deg[5], let_rad[5], len(let_deg[5] * 2), 0, 0, 0, 0))        # O
-        self.over_list.append(self._init_obj(let_deg[10], let_rad[10], len(let_deg[10] * 2), 0, 0, 0, 0))     # V
-        self.over_list.append(self._init_obj(let_deg[3], let_rad[3], len(let_deg[3] * 2), 0, 0, 0, 0))        # E
-        self.over_list.append(self._init_obj(let_deg[4], let_rad[4], len(let_deg[4] * 2), 0, 0, 0, 0))        # R
+        self.over_list.append(self._init_obj(Obj_Types.LETTER, score_deg[6], score_rad[6], len(score_deg[6] * 2), 0, 0, 0, 0))  # G
+        self.over_list.append(self._init_obj(Obj_Types.LETTER, let_deg[0], let_rad[0], len(let_deg[0] * 2), 0, 0, 0, 0))        # A
+        self.over_list.append(self._init_obj(Obj_Types.LETTER, let_deg[9], let_rad[9], len(let_deg[9] * 2), 0, 0, 0, 0))        # M
+        self.over_list.append(self._init_obj(Obj_Types.LETTER, let_deg[3], let_rad[3], len(let_deg[3] * 2), 0, 0, 0, 0))        # E
+        self.over_list.append(self._init_obj(Obj_Types.LETTER, let_deg[5], let_rad[5], len(let_deg[5] * 2), 0, 0, 0, 0))        # O
+        self.over_list.append(self._init_obj(Obj_Types.LETTER, let_deg[10], let_rad[10], len(let_deg[10] * 2), 0, 0, 0, 0))     # V
+        self.over_list.append(self._init_obj(Obj_Types.LETTER, let_deg[3], let_rad[3], len(let_deg[3] * 2), 0, 0, 0, 0))        # E
+        self.over_list.append(self._init_obj(Obj_Types.LETTER, let_deg[4], let_rad[4], len(let_deg[4] * 2), 0, 0, 0, 0))        # R
     
     def _show_title(self, objs):
         """ Animated title screen update frame. """
@@ -393,7 +414,7 @@ class AsteroidsGame:
     def _init_big_score(self):
         """Initialize big score display objects."""
         for i in range(0, 10):
-            self.score_list.append(self._init_obj(score_deg[i], score_rad[i], len(score_deg[i] * 2), 0, 0, 8 * self.SCALE, self.SCALE))
+            self.score_list.append(self._init_obj(Obj_Types.NUMBER, score_deg[i], score_rad[i], len(score_deg[i] * 2), 0, 0, 8 * self.SCALE, self.SCALE))
             self.score_list[i].y = self.MAX_Y * 7 // 10
             self.score_list[i].ax = 0
             self.score_list[i].ay = 0
@@ -413,11 +434,11 @@ class AsteroidsGame:
             else:
                 xpos = ((self.MAXSCREEN_X + 1) // 2) + (score_places * self.display.fontWidth // 2) - (self.display.fontWidth)
         else:
-            xpos = self.MAXSCREEN_X // 5
+            xpos = self.display.fontWidth * 4
         # Blank area behind text, then draw each digit
         num = self.score.value
         while num > 0:
-            self.display.fill_rect(xpos - 1, self.scoreY - 1, self.display.fontWidth, int(self.display.fontHeight) + 1, self.display.black)
+            self.display.fill_rect(xpos - 1, self.scoreY - 1, self.display.fontWidth, int(self.display.fontHeight) + 1, self.backcolour)
             self.display.text(self.score.digits[num % 10], xpos, self.scoreY, colour)
             num //= 10
             xpos -= self.display.fontWidth
@@ -426,7 +447,7 @@ class AsteroidsGame:
         """Show large custom score."""
         self.score.show = True
         self.display.fill_rect(self.MAXSCREEN_X * 2 // 10, self.MAXSCREEN_Y * 9 // 16, 
-                               self.MAXSCREEN_X * 6 // 10, self.MAXSCREEN_Y * 5 // 16, self.display.black)
+                               self.MAXSCREEN_X * 6 // 10, self.MAXSCREEN_Y * 5 // 16, self.backcolour)
         num = self.score.value
         places = 0
         while num > 0:
@@ -447,7 +468,7 @@ class AsteroidsGame:
             self.over_list[1].x = self.MAX_X - self.SCALE * 12
         # Draw lives in a loop, 'clearing' to blue to wipe themselves out on each move
         # which stamps a copy of the marker onto the screen
-        self.over_list[1].back_colour = self.display.black # Black for first draw so old position is erased
+        self.over_list[1].back_colour = self.backcolour # So old position is erased
         for i in range(0, self.score.lives):
             self.over_list[1].x -= spacing
             self._update_object(self.over_list[1], False)
@@ -499,9 +520,9 @@ class AsteroidsGame:
         # Clear screen ready for new game
         self.display.fill(self.display.black)
     
-    def _init_obj(self, ptdeg, ptrad, pts, tumble, x, y, size):
+    def _init_obj(self, object_type, ptdeg, ptrad, pts, tumble, x, y, size):
         """Create a game object."""
-        obj = Vector_Object(ptdeg, ptrad, pts, tumble, x, y, size, self.display)
+        obj = Vector_Object(object_type, ptdeg, ptrad, pts, tumble, x, y, size, self.display)
         for i in range(0, obj.pts):
             obj.pt.append(Obj_point())
         return obj
@@ -518,7 +539,7 @@ class AsteroidsGame:
                 degs[len(degs)-1] = 0
             else:
                 degs.append(0)
-            self.asteroids.append(self._init_obj(degs,
+            self.asteroids.append(self._init_obj(Obj_Types.ASTEROID, degs,
                                                 [14] + [randint(12, 17) for _ in range(len(degs) - 2)] + [14],
                                                 len(degs)*2, rotn[randint(0, 5)], 0, 0, 3 * self.SCALE + 1))
             self.asteroids[j].scale = 0.5
@@ -542,7 +563,7 @@ class AsteroidsGame:
     def _init_asteroid(self, obj):
         """Set initial parameters for a newly created asteroid."""
         obj.active = True
-        self._perimeter(obj)
+        self._perimeter(obj) # Set position randomly on screen perimeter
         obj.size = self.SCALE * self.asteroid_max_size + 1
         obj.calc_coll(self.hitbox_scale)
         obj.tumble = rotn[randint(0, 5)]
@@ -606,7 +627,7 @@ class AsteroidsGame:
         if drawHitbox:
             if colour != self.display.black:
                 col_main = self.display.red
-                if obj.colour == self.display.green:
+                if obj.type == Obj_Types.SHIP:
                     # Ship hitbox doubles as shield, so don't use debugging colours
                     col_x_min = col_main
                     col_y_min = col_main
@@ -677,18 +698,19 @@ class AsteroidsGame:
    
     def _update_object(self, obj, explode, hitbox=False):
         """Blank out game object, move it and redraw it."""
-        if obj.colour == self.display.green and (self.ship.damage == False or self.shield_was_on):
+        if obj.type == Obj_Types.SHIP and (self.ship.damage == False or self.shield_was_on):
+            # Hitbox doubles as shield for ship
             hitbox = True
         self._draw_object_lines(obj, hitbox, obj.back_colour)
         # Clear shield was on flag if shield was off on this cycle
-        if obj.colour == self.display.green and self.ship.damage and self.shield_was_on:
+        if obj.type == Obj_Types.SHIP and self.ship.damage and self.shield_was_on:
             self.shield_was_on = False
             hitbox = False # Prevent hitbox being drawn again
         if (obj.exp > -1 and obj.tumble == 0) or (obj.size > 0 and obj.tumble != 0) or self.score.show:
             self._move_object(obj, explode)
             c = obj.colour
-            ## Show ship in red if damage protection on (ship is determined by object being green)
-            # if self.ship.damage == False and obj.colour == self.display.green:
+            ## Show ship in red if damage protection on
+            # if self.ship.damage == False and obj.type == Obj_Types.SHIP:
             #     c = self.display.red
             if obj.exp > 30:
                 c = self.white_shades[60 - obj.exp]
@@ -700,18 +722,45 @@ class AsteroidsGame:
             self.ship.ax = self.ship.ax * 199 // 200
         if self.ship.ay != 0:
             self.ship.ay = self.ship.ay * 199 // 200
-        '''
-        if self.ship.ax < 5 and self.ship.ax > -5:
-            self.ship.ax = 0
-        if self.ship.ay < 5 and self.ship.ay > -5:
-            self.ship.ay = 0
-        '''
 
+        # Rotation adjustments
+        self.adj_spin_power = self.ship_spin_power * 25 / self.fps
+        if abs(self.ship.spin_thrust) > self.adj_spin_power:
+            # Apply built up thrust
+            if abs(self.ship.tumble) < self.ship_spin_power * 4:
+                # At low tumble levels, instantly allow reverse thrust to change direction (or game is too hard)
+                if ((self.ship.tumble > 0 and self.ship.spin_thrust < 0)
+                or (self.ship.tumble < 0 and self.ship.spin_thrust > 0)):
+                    self.ship.tumble = 0
+                    self.ship.spin_thrust = 0.0
+                    if self.debug:
+                        print("Stopped Spin")
+            self.ship.tumble += self.ship.spin_thrust
+            if self.debug:
+                print(f"Applied spin: {self.ship.spin_thrust}")
+            self.ship.spin_thrust = 0.0
+        if abs(self.ship.tumble) > self.max_ship_tumble:
+            # Cap max spin speed of ship to prevent crew being pasted over inside of ship
+            was = self.ship.tumble
+            if self.ship.tumble > 0:
+                self.ship.tumble = self.max_ship_tumble
+            else:
+                self.ship.tumble = -self.max_ship_tumble
+            if self.debug:
+                print(f"Ship tumble capped: ({was:.2f}) {self.ship.tumble:.2f}")
+        elif abs(self.ship.tumble) > self.adj_spin_power / 8:
+            # was = self.ship.tumble
+            self.ship.tumble = self.ship.tumble * 0.98**(25 / self.fps)
+            # if self.debug:
+            #     print(f"Ship tumble: ({was:.2f}) {self.ship.tumble:.2f}")
+        else:
+            self.ship.tumble = 0
+        
     def _move_object(self, obj, explode):
         """Move and update object state."""
         if not obj.active:
             return
-        if obj.tumble != 0:
+        if obj.type == Obj_Types.ASTEROID:
             # Asteroid speed increment increases with number of asteroids on screen
             obj.x += obj.ax * 25 * self.asteroid_count // (4 * self.fps)
             obj.y += obj.ay * 25 * self.asteroid_count // (4 * self.fps)
@@ -739,8 +788,11 @@ class AsteroidsGame:
                 obj.x = 0
             if obj.x < 0:
                 obj.x = self.MAX_X
-        
-        obj.deg += obj.tumble * 25 // self.fps
+
+        if obj.type == Obj_Types.SHIP:
+            obj.deg += obj.tumble * 6 // self.fps # Ship spins slower than asteroids for same tumble level
+        else:
+            obj.deg += obj.tumble * 25 // self.fps
         while obj.deg > 359:
             obj.deg -= 360
         while obj.deg < 0:
@@ -763,8 +815,9 @@ class AsteroidsGame:
     
     def _thrust(self):
         """Apply thrust to ship."""
-        self.ship.ax = self.ship.ax + self.icos[self.ship.deg] // 150
-        self.ship.ay = self.ship.ay + self.isin[self.ship.deg] // 150
+        deg = int(self.ship.deg)
+        self.ship.ax = self.ship.ax + self.icos[deg] // 150
+        self.ship.ay = self.ship.ay + self.isin[deg] // 150
         self._init_exhaust()
     
     def _init_exhaust(self):
@@ -788,9 +841,9 @@ class AsteroidsGame:
                     self.exhausty[i + 1].x = self.ship.pt[3].x
                     self.exhausty[i + 1].y = self.ship.pt[3].y
                     if self.ship.deg > 179:
-                        deg = self.ship.deg - 180
+                        deg = int(self.ship.deg) - 180
                     else:
-                        deg = self.ship.deg + 180
+                        deg = int(self.ship.deg) + 180
                     self.exhausty[i].ax = self.ship.ax + self.icos[deg] // 10 * 1 + randint(-10, 10) * 10
                     self.exhausty[i].ay = self.ship.ay + self.isin[deg] // 10 * 1 + randint(-10, 10) * 10
                     self.exhausty[i + 1].ax = self.ship.ax + self.icos[deg] // 10 * 1 + randint(-10, 10) * 10
@@ -829,13 +882,17 @@ class AsteroidsGame:
         if self.ship.exp == 0:
             # Only allow control when ship is not exploding
             if self.display.is_key_held(self.KEY_UP) or self.display.is_key_held(self.KEY_RIGHT):
-                self.ship.deg += 2 + (50 - fps) // 5
-                if self.ship.deg > 359:
-                    self.ship.deg = 0
+                self.ship.spin_thrust += self.adj_spin_power #/ 4
+                #self.ship.tumble += self.adj_spin_power
+                # self.ship.deg += 2 + (50 - fps) // 5
+                # if self.ship.deg > 359:
+                #     self.ship.deg = 0
             if self.display.is_key_held(self.KEY_DOWN) or self.display.is_key_held(self.KEY_LEFT):
-                self.ship.deg -= 2 + (50 - fps) // 5
-                if self.ship.deg < 0:
-                    self.ship.deg = 359
+                self.ship.spin_thrust -= self.adj_spin_power #/ 4
+                #self.ship.tumble -= self.adj_spin_power
+                # self.ship.deg -= 2 + (50 - fps) // 5
+                # if self.ship.deg < 0:
+                #     self.ship.deg = 359
             if self.display.is_key_held(self.KEY_RUN):
                 self._thrust()
             if (self.display.is_key_held(self.KEY_SHIELD) and self.ship.damage
@@ -859,13 +916,14 @@ class AsteroidsGame:
     
     def _fire(self):
         """Fire a missile."""
+        deg = int(self.ship.deg)
         for i in self.bullets:
             if i.active == False:
                 i.active = True
-                i.x = self.ship.pt[0].x + self.icos[self.ship.deg]
-                i.y = self.ship.pt[0].y + self.isin[self.ship.deg]
-                i.ax = self.ship.ax + self.icos[self.ship.deg] // 10 * 3
-                i.ay = self.ship.ay + self.isin[self.ship.deg] // 10 * 3
+                i.x = self.ship.pt[0].x + self.icos[deg]
+                i.y = self.ship.pt[0].y + self.isin[deg]
+                i.ax = self.ship.ax + self.icos[deg] // 10 * 3
+                i.ay = self.ship.ay + self.isin[deg] // 10 * 3
                 return
     
     def _split_asteroid(self, objs, last):
@@ -978,7 +1036,7 @@ class AsteroidsGame:
                             self.asteroids[j].tumble = 0
                             self.asteroids[j].ax = 0
                             self.asteroids[j].ay = 0
-                            if self.hitbox_debug:
+                            if self.debug:
                                 # Erase hitbox as asteroid is destroyed
                                 self._draw_circle(self.asteroids[j].x, self.asteroids[j].y, self.asteroids[j].coll, self.asteroids[j].back_colour)
                             self.bullets[i].active = False
@@ -1034,6 +1092,9 @@ class AsteroidsGame:
                             # Wrap to left side of screen
                             sepX = objPoint.x - (objPerimeter.x - self.MAX_X)
                             doCheck = case == 1 # Only check if only wrapping x
+                    else:
+                        sepX = objPoint.x - objPerimeter.x
+
                     if case >= 2:
                         # Wrap in y if near screen edge
                         if objPerimeter.y - objPerimeter.coll < 0:
@@ -1077,6 +1138,8 @@ class AsteroidsGame:
                             case = 0 # Cases 0 = no wrap, 1=wrap in x only, 2=wrap in y only, 3=wrap in both
                             collision = False
                             rd = primary.coll + other.coll
+                            sep_x = other.x - primary.x
+                            sep_y = other.y - primary.y
                             while case < 4 and collision == False:
                                 sep = 0.0
                                 sep_x = other.x - primary.x
@@ -1133,6 +1196,10 @@ class AsteroidsGame:
                                     pre_power = sqrt((primary.ax * self.asteroid_count // 4)**2 + (primary.ay * self.asteroid_count // 4)**2) + sqrt(other.ax**2 + other.ay**2)
                                     # Extend shield time when a ship collision occurs
                                     self._shields_up()
+                                    # Transfer rotational force from asteroid to ship
+                                    self.ship.tumble -= (primary.tumble * primary.coll * 4) // self.SCALE
+                                    if self.debug:
+                                        print(f"Ship post collision tumble: {self.ship.tumble}")
                                 else:
                                     astDiv = 1000
                                     shipDiv = 1000
@@ -1156,7 +1223,7 @@ class AsteroidsGame:
                                     other.ax *= scale
                                     other.ay *= scale
 
-                self._update_object(self.asteroids[i], (self.asteroids[i].exp > 0), self.hitbox_debug)
+                self._update_object(self.asteroids[i], (self.asteroids[i].exp > 0), self.debug)
                 # Check for ship impact with asteroid (if both at active)
                 if (self.ship.damage and self.ship.exp == 0 and self.asteroids[i].exp == 0
                     and self._check_object_collision(self.ship, self.asteroids[i]) 
@@ -1196,14 +1263,14 @@ class AsteroidsGame:
         """Update and show star field."""
         j = 0
         k = 0
+        if self.ship.deg > 179:
+            deg = int(self.ship.deg) - 180
+        else:
+            deg = int(self.ship.deg) + 180
         for i in range(0, self.MAXSCREEN_X // 26):
             if self.expPnts[i].active:
                 if self.expPnts[i].x >= 0 and self.expPnts[i].x <= self.MAX_X and self.expPnts[i].y >= 0 and self.expPnts[i].y <= self.MAX_Y:
                     self._draw_point(self.expPnts[i].x, self.expPnts[i].y, self.display.black)
-                    if self.ship.deg > 179:
-                        deg = self.ship.deg - 180
-                    else:
-                        deg = self.ship.deg + 180
                     self.expPnts[i].x = int(self.expPnts[i].x - self.ship.ax + self.icos[deg] // 10)
                     self.expPnts[i].y = int(self.expPnts[i].y - self.ship.ay + self.isin[deg] // 10)
                     colour = self.display.white
@@ -1308,9 +1375,22 @@ class AsteroidsGame:
         fps = 1_000_000 // self.display.ticks_diff(self.display.ticks_us(), self.gticks)
         self.gticks = self.display.ticks_us()
         # Display fps on screen for debugging
-        if self.hitbox_debug:
-            self.display.fill_rect(10, self.MAXSCREEN_Y - 27, 310, 24, self.display.red)
-            self.display.text(f"t:{self.title_fps} fps:{fps} payl:{self.total_rock_payload} peak:{self.peak_rock_payload}", 12, self.MAXSCREEN_Y - 25, self.display.blue)
+        if self.debug:
+            keys = ""
+            if self.display.is_key_held(self.KEY_LEFT):
+                keys += " L"
+            if self.display.is_key_held(self.KEY_RIGHT):
+                keys += " R"
+            if self.display.is_key_held(self.KEY_UP):
+                keys += " U"
+            if self.display.is_key_held(self.KEY_FIRE):
+                keys += " F"
+            if self.display.is_key_held(self.KEY_SHIELD):
+                keys += " S"
+            if self.display.is_key_held(self.KEY_RUN):
+                keys += " T"
+            self.display.fill_rect(10, self.MAXSCREEN_Y - 27, self.display.fontWidth * 24, self.display.fontHeight + 2, self.backcolour)
+            self.display.text(f"keys:{keys} fps:({self.title_fps}){fps} payl:{self.total_rock_payload} peak:{self.peak_rock_payload}", 12, self.MAXSCREEN_Y - 25, self.display.blue)
 
         # Prevent zero value on frame before timing starts
         if fps == 0:
@@ -1324,7 +1404,6 @@ class AsteroidsGame:
             self._show_small_score(self.display.green) # Update score first as it blanks area behind digits
             if not self.score.show:
                 self._move_asteroids() # This resets asteroid_count to number active as it changes during game   
-            self._slow_ship()
             self._ship_condition()   # Animates ship explosion and ends life and resets if fully exploded
             self._update_object(self.ship, self.ship.exp > 0)
             self._move_miss_new()
@@ -1332,6 +1411,7 @@ class AsteroidsGame:
             self._stars()
             self._draw_lives_remaining()
             self._explode() # Update explosion particles (which are also the stars)
+            self._slow_ship()
             self.rfire += 1 # Increment frames since last fired counter
 
             # Check need to add rocks every x seconds

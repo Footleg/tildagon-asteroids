@@ -7,7 +7,7 @@
     "author": "Footleg",
     "license": "GPL-3.0-only",
     "url": "https://github.com/Footleg/tildagon-asteroids",
-    "description": "A port of Asteroids with rock physics for a circular display.",
-    "version": "0.1.0"
+    "description": "A port of Asteroids with rock and ship physics for a circular display.",
+    "version": "0.2.0"
   }
 }
